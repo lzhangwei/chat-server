@@ -62,20 +62,21 @@ router.post('/login', function (req, res) {
 var seedDB = function () {
   var users = [
     {
-      id: "001",
-      name: "zhangsan",
+      name: "zhangsanaaa",
       password: "a000000",
-      role: "SERVICE"
+      role: "SERVICE",
+      status: "offline"
     },
     {
-      id: "002",
       name: "lisi",
       password: "a000000",
-      role: "SERVICE"
+      role: "SERVICE",
+      status: "offline"
     }];
 
   Db.collection('users', function (err, user) {
     user.insert(users, {safe: true}, function (err, result) {
+      console.log("insert successful");
     });
   });
 };
