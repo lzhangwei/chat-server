@@ -6,6 +6,8 @@ var cookieParser = require('cookie-parser');
 var bodyParser = require('body-parser');
 
 var app = express();
+var http = require('http').Server(app);
+var io = require('socket.io')(http);
 
 // uncomment after placing your favicon in /public
 //app.use(favicon(__dirname + '/public/favicon.ico'));
@@ -23,7 +25,7 @@ app.use(express.static(path.join(__dirname, '../client/app')));
 
 // development error handler
 // will print stacktrace
-app.use(function(err, req, res, next) {
+app.use(function (err, req, res, next) {
   res.status(err.status || 500);
   res.render('error', {
     message: err.message,
@@ -31,13 +33,48 @@ app.use(function(err, req, res, next) {
   });
 });
 
-app.post('/', function(request, response){
+app.post('/', function (request, response) {
   console.log(request.body);      // your JSON
   response.send(request.body);    // echo the result back
 });
 
 
-app.listen(3000);
+// socket.io
+var users = {};
+var sockets = {};
+
+io.on('connection', function (socket) {
+
+  console.log("---socket io connection---");
+
+  // socket.on('connection', function(message) {
+  //   console.log("---socket io on---" + message);
+  // });
+
+  // Register your client with the server, providing your username
+  socket.on('init', function (userName, userRole) {
+    console.log('---socket io init---' + userName + '---' + userRole);
+    users[userName] = socket.id;    // Store a reference to your socket ID
+    sockets[socket.id] = {username: userName, socket: socket};  // Store a reference to your socket
+  });
+
+  // Private message is sent from client with username of person you want to 'private message'
+  socket.on('message', function (to, message) {
+    // Lookup the socket of the user you want to private message, and send them your message
+    console.log("---socket io private message---" + to + "---" + message);
+    sockets[users[to]].emit(
+      'message',
+      {
+        message: message,
+        from: sockets[socket.id].username
+      }
+    );
+  });
+});
+
+
+http.listen(3000);
+
 
 // routes
 var router = require('./router')(app);
