@@ -48,24 +48,35 @@ app.post('/', function (request, response) {
 var users = {};
 var sockets = {};
 
-function serviceOnline(userName) {
+function updateServiceStatus(serviceName, status) {
+  console.log("update service status:" + serviceName + "--" +status);
   Db.open(function (err, db) {
     if (!err) {
-      console.log('connected to database ChatDb');
       db.collection('users').updateOne(
-        {'name': userName, 'role': 'service'},
+        {'name': serviceName, 'role': status},
         {
           $set: {'status': 'online'}
         },
         function (err, results) {
-          console.log("update result --- " + results);
+          if (!err) {
+            console.log("update result --- " + results);
+          } else {
+            console.log("---ERROR--- change service online")
+          }
         });
+    } else {
+      console.log('---ERROR--- service online: open database');
     }
   });
 }
 
 function addUserServiceRelation(db, userName, serviceName) {
-  db.insert({'user-service': userName, 'service': serviceName});
+  db.collection('user_service', function (err, collection) {
+    console.log("add user service relation: userName-" + userName + " serviceName-" + serviceName);
+    collection.insert({'user': userName, 'service': serviceName}, function (err, result) {
+      console.log('add user service relation' + err + '---' + JSON.stringify(result));
+    });
+  });
 }
 
 function systemEmitStartChat(serviceName) {
@@ -84,11 +95,21 @@ function systemEmitBusyMessage(userName) {
     });
 }
 
+function systemEmitChatOver(serviceName) {
+  sockets[users[serviceName]].socket.emit('message',
+    {
+      message: '用户已结束对话',
+      from: 'System'
+    });
+}
+
 function findOne(query, collection, callback) {
+  console.log("find one query:" + JSON.stringify(query));
   collection.findOne(query, callback);
 }
 
 function emitMessage(chatUserName, message, selfName) {
+  console.log("---emit message--- chat user:" + chatUserName + "---self name:" + selfName);
   sockets[users[chatUserName]].socket.emit('message',
     {
       message: message,
@@ -97,50 +118,45 @@ function emitMessage(chatUserName, message, selfName) {
   );
 }
 
-function userFindService(db, collection, userName, serviceName) {
-  findOne({'role': 'service', 'status': 'online'}, collection,
-    function (err, data) {
-      if (data != null) {
-        serviceName = data.name;
-        //add user-service relation to db
-        addUserServiceRelation(db, userName, serviceName);
-        //send message to service
-        if (sockets[serviceName] != null) {
-          systemEmitStartChat(serviceName);
+function userFindService(db, userName, message) {
+  db.collection('users', function (err, collection) {
+    if(!err) {
+      console.log("user find service - user name: "+userName);
+      findOne({'role': 'service', 'status': 'online'}, collection,
+        function (err, data) {
+          if (!err && data != null) {
+            var serviceName = data.name;
+            console.log("find service success! service name: " + serviceName);
+            //add user-service relation to db
+            addUserServiceRelation(db, userName, serviceName);
+            //updat service status to busy
+            updateServiceStatus(serviceName, 'busy');
+            //send message to service
+            console.log("user send message to service");
+            emitMessage(serviceName,message,userName);
+            // if (sockets[serviceName] != null) {
+            //   systemEmitStartChat(serviceName);
+            // }
+          } else {
+            console.log("find service error!");
+            //send message to user(no online service)
+            systemEmitBusyMessage(userName);
+          }
         }
-      } else {
-        //send message to user(no online service)
-        systemEmitBusyMessage(userName);
-      }
+      );
     }
-  );
+  });
 }
 
 io.on('connection', function (socket) {
   // Register your client with the server, providing your userName and userRole
   socket.on('init', function (userName, userRole) {
-    console.log('---socket io init---' + userName + '---' + userRole);
-    console.log('---socket id---' + socket.id);
     users[userName] = socket.id;    // Store a reference to your socket ID
     sockets[socket.id] = {'username': userName, 'socket': socket};  // Store a reference to your socket
 
     if (userRole == 'service') {
       //change user status to ONLINE
-      serviceOnline(userName);
-    } else if (userRole == 'user') {
-      //Search online Service -> add to map -> send message to service(start chat)
-      Db.open(function (err, db) {
-        if (!err) {
-          console.log('connected to database ChatDb');
-          db.collection('users', function (err, collection) {
-            if (!err) {
-              userFindService(db, collection, userName, null);
-            } else {
-              console.log('Error: ');
-            }
-          });
-        }
-      });
+      updateServiceStatus(userName, 'service');
     }
   });
 
@@ -150,24 +166,41 @@ io.on('connection', function (socket) {
     console.log("---socket io private message---");
     Db.open(function (err, db) {
       if (!err) {
-        console.log('connected to database ChatDb');
-        db.collection('users', function (err, collection) {
+        //find user-service
+        db.collection('user_service', function (err, collection) {
           if (!err) {
-            findOne({userRole: userName}, collection,
+            console.log("send message: self role and name-" + "userRole-" + userRole + "--userName-" + userName);
+            var query;
+            if(userRole == 'user') {
+              query = {"user": userName};
+            } else if(userRole == "service") {
+              query = {"service": userName};
+            }
+            findOne(query, collection,
               function (err, result) {
-                console.log("find result --- " + result);
-                if (result != null) {
-                  if (userRole = 'user') {
+                console.log("find user service relation --" + err + JSON.stringify(result));
+                if (!err && result != null && result != "") {
+                  console.log("send message:find result --- " + result);
+                  //send message
+                  if (userRole == 'user') {
+                    console.log("-----------user send message to service ----------");
                     emitMessage(result.service, message, userName);
-                  } else {
+                  } else if (userRole == 'service') {
+                    console.log("-----------service send message to service ----------");
                     emitMessage(result.user, message, userName);
                   }
                 } else {
                   if (userRole == 'user') {
-                    userFindService(db, collection, userName, null);
+                    console.log("user find service call: userName-" + userName);
+                    userFindService(db, userName, message);
+                  } else if (userRole == 'service') {
+                    updateServiceStatus(userName, 'online');
+                    systemEmitChatOver(userName);
                   }
                 }
               });
+          } else {
+            console.log("---ERROR--- send message: open db")
           }
         });
       }

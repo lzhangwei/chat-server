@@ -51,6 +51,7 @@ router.post('/login', function (req, res) {
   Db.collection('users', function(err, collection){
     if(!err){
       collection.findOne(user, function(err, user){
+        console.log('find user---' + JSON.stringify(user));
         res.send(user);
       });
     }else{
